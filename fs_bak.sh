@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # === Configuration ===
 DATE_FOLDER=$(date +"%Y-%m-%d")      # For S3 folder (readable)
@@ -11,23 +12,30 @@ TMP_DIR="/tmp/fs-backups"
 LOG_DIR="/home/ubuntu/logs"
 LOG_FILE="$LOG_DIR/${DATE_FOLDER}.fs.log"
 
-S3_BUCKET="pm-fr-bucket"
+S3_BUCKET="martok-bucket"
 S3_PREFIX="fs-baks/$DATE_FOLDER"
 
 EMAIL_FROM="patrick@powdermonkey.eu"
 EMAIL_TO="patrick@powdermonkey.eu"
 REGION="eu-west-3"
 
-SUBJECT="✅ File System Backup Report – $DATE_FOLDER"
+SUBJECT="✅ Martok File System Backup Report – $DATE_FOLDER"
 EMAIL_BODY=""
 ERRORS=()
 
 # === Ensure directories exist ===
 mkdir -p "$TMP_DIR" "$LOG_DIR"
 
+# === Cleanup trap on script exit ===
+cleanup() {
+    echo "🧹 Cleaning up any leftover temporary files..." | tee -a "$LOG_FILE"
+    rm -rf "$TMP_DIR"/*
+}
+trap cleanup EXIT
+
 # === Start backup ===
 echo "📁 Starting file system backup on $DATE_FOLDER at $TIME_NOW" | tee "$LOG_FILE"
-EMAIL_BODY+="File system backup started on $DATE_FOLDER at $TIME_NOW\n\n"
+EMAIL_BODY+="Martok File system backup started on $DATE_FOLDER at $TIME_NOW\n\n"
 
 cd "$SOURCE_DIR" || {
     ERR="❌ Cannot access $SOURCE_DIR"
@@ -42,27 +50,41 @@ for full_path in "$SOURCE_DIR"/prod*/; do
     folder_name=$(basename "$full_path")
     archive_name="${folder_name}-${TIMESTAMP}.tar.gz"
     archive_path="${TMP_DIR}/${archive_name}"
+    snapshot_dir="${TMP_DIR}/${folder_name}-snapshot"
 
-    echo "📦 Archiving $folder_name → $archive_path" | tee -a "$LOG_FILE"
-    tar -czf "$archive_path" "$folder_name"
+    echo "📋 Creating snapshot for $folder_name → $snapshot_dir" | tee -a "$LOG_FILE"
+    rsync -a --delete "$full_path" "$snapshot_dir"
 
     if [ $? -ne 0 ]; then
-        ERR="❌ Failed to archive $folder_name"
+        ERR="❌ Rsync failed for $folder_name"
         echo "$ERR" | tee -a "$LOG_FILE"
         ERRORS+=("$ERR")
         continue
     fi
 
-    echo "☁️  Uploading to s3://$S3_BUCKET/$S3_PREFIX/$archive_name" | tee -a "$LOG_FILE"
+    echo "📦 Archiving snapshot $folder_name → $archive_path" | tee -a "$LOG_FILE"
+    tar -czf "$archive_path" -C "$TMP_DIR" "$(basename "$snapshot_dir")"
+
+    if [ $? -ne 0 ]; then
+        ERR="❌ Failed to archive $folder_name"
+        echo "$ERR" | tee -a "$LOG_FILE"
+        ERRORS+=("$ERR")
+        rm -rf "$snapshot_dir"
+        continue
+    fi
+
+    echo "☁️ Uploading to s3://$S3_BUCKET/$S3_PREFIX/$archive_name" | tee -a "$LOG_FILE"
     aws s3 cp "$archive_path" "s3://$S3_BUCKET/$S3_PREFIX/$archive_name" --region "$REGION"
 
     if [ $? -eq 0 ]; then
-        echo "✅ Upload successful. Deleting local archive." | tee -a "$LOG_FILE"
+        echo "✅ Upload successful. Cleaning up..." | tee -a "$LOG_FILE"
         rm -f "$archive_path"
+        rm -rf "$snapshot_dir"
     else
         ERR="❌ Upload failed for $archive_name"
         echo "$ERR" | tee -a "$LOG_FILE"
         ERRORS+=("$ERR")
+        rm -rf "$snapshot_dir"  # Clean up snapshot anyway
     fi
 done
 
