@@ -82,13 +82,9 @@ elif [[ "$CMS_TYPE" == "d7" ]]; then
     location ~* \.(engine|inc|install|make|module|profile|po|sh|.*sql|theme|tpl\.php)$ {
         deny all;
     }
-
-    # Image styles: let Drupal generate missing derivatives
     location ~* ^/sites/.*/files/styles/ {
-        try_files $uri @drupal;
+        allow all;
     }
-
-    # Private files must remain blocked
     location ~* ^/sites/.*/files/private/ {
         deny all;
     }
@@ -98,11 +94,6 @@ elif [[ "$CMS_TYPE" == "d7" ]]; then
         expires 6M;
         access_log off;
         log_not_found off;
-    }
-
-    # Fallback handler for Drupal
-    location @drupal {
-        rewrite ^ /index.php;
     }
 DRUPAL7
 )
@@ -184,9 +175,6 @@ cat > "$NGINX_CONF_PATH" <<EOF
 server {
     listen 80;
     server_name $DOMAIN www.$DOMAIN;
-
-    # Upload size limits (safe default: 64M)
-    client_max_body_size 64M;
 
     root $SITE_ROOT;
     index index.php;

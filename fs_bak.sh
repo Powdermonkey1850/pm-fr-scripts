@@ -17,7 +17,7 @@ S3_PREFIX="fs-baks/$DATE_FOLDER"
 
 EMAIL_FROM="patrick@powdermonkey.eu"
 EMAIL_TO="patrick@powdermonkey.eu"
-REGION="eu-west-3"
+REGION="eu-west-2"
 
 SUBJECT="✅ Martok File System Backup Report – $DATE_FOLDER"
 EMAIL_BODY=""
@@ -26,25 +26,28 @@ ERRORS=()
 # === Ensure directories exist ===
 mkdir -p "$TMP_DIR" "$LOG_DIR"
 
+# === Redirect all output to log file (tailable) ===
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 # === Cleanup trap on script exit ===
 cleanup() {
-    echo "🧹 Cleaning up any leftover temporary files..." | tee -a "$LOG_FILE"
+    echo "🧹 Cleaning up any leftover temporary files..."
     rm -rf "$TMP_DIR"/*
 }
 trap cleanup EXIT
 
 # === Start backup ===
-echo "📁 Starting file system backup on $DATE_FOLDER at $TIME_NOW" | tee "$LOG_FILE"
+echo "📁 Starting file system backup on $DATE_FOLDER at $TIME_NOW"
 EMAIL_BODY+="Martok File system backup started on $DATE_FOLDER at $TIME_NOW\n\n"
 
 cd "$SOURCE_DIR" || {
     ERR="❌ Cannot access $SOURCE_DIR"
-    echo "$ERR" | tee -a "$LOG_FILE"
+    echo "$ERR"
     ERRORS+=("$ERR")
 }
 
 # === Process each prod* directory ===
-for full_path in "$SOURCE_DIR"/prod*/; do
+for full_path in $SOURCE_DIR/prod*/; do
     [ -d "$full_path" ] || continue
 
     folder_name=$(basename "$full_path")
@@ -52,40 +55,34 @@ for full_path in "$SOURCE_DIR"/prod*/; do
     archive_path="${TMP_DIR}/${archive_name}"
     snapshot_dir="${TMP_DIR}/${folder_name}-snapshot"
 
-    echo "📋 Creating snapshot for $folder_name → $snapshot_dir" | tee -a "$LOG_FILE"
-    rsync -a --delete "$full_path" "$snapshot_dir"
-
-    if [ $? -ne 0 ]; then
+    echo "📋 Creating snapshot for $folder_name → $snapshot_dir"
+    rsync -a --delete "$full_path" "$snapshot_dir" || {
         ERR="❌ Rsync failed for $folder_name"
-        echo "$ERR" | tee -a "$LOG_FILE"
+        echo "$ERR"
         ERRORS+=("$ERR")
         continue
-    fi
+    }
 
-    echo "📦 Archiving snapshot $folder_name → $archive_path" | tee -a "$LOG_FILE"
-    tar -czf "$archive_path" -C "$TMP_DIR" "$(basename "$snapshot_dir")"
-
-    if [ $? -ne 0 ]; then
+    echo "📦 Archiving snapshot $folder_name → $archive_path"
+    tar -czf "$archive_path" -C "$TMP_DIR" "$(basename "$snapshot_dir")" || {
         ERR="❌ Failed to archive $folder_name"
-        echo "$ERR" | tee -a "$LOG_FILE"
+        echo "$ERR"
         ERRORS+=("$ERR")
         rm -rf "$snapshot_dir"
         continue
-    fi
+    }
 
-    echo "☁️ Uploading to s3://$S3_BUCKET/$S3_PREFIX/$archive_name" | tee -a "$LOG_FILE"
-    aws s3 cp "$archive_path" "s3://$S3_BUCKET/$S3_PREFIX/$archive_name" --region "$REGION"
-
-    if [ $? -eq 0 ]; then
-        echo "✅ Upload successful. Cleaning up..." | tee -a "$LOG_FILE"
+    echo "☁️ Uploading to s3://$S3_BUCKET/$S3_PREFIX/$archive_name"
+    /usr/local/bin/aws s3 cp "$archive_path" "s3://$S3_BUCKET/$S3_PREFIX/$archive_name" --region "$REGION" && {
+        echo "✅ Upload successful. Cleaning up..."
         rm -f "$archive_path"
         rm -rf "$snapshot_dir"
-    else
+    } || {
         ERR="❌ Upload failed for $archive_name"
-        echo "$ERR" | tee -a "$LOG_FILE"
+        echo "$ERR"
         ERRORS+=("$ERR")
-        rm -rf "$snapshot_dir"  # Clean up snapshot anyway
-    fi
+        rm -rf "$snapshot_dir"
+    }
 done
 
 # === Compose email body ===
@@ -104,16 +101,16 @@ fi
 EMAIL_BODY+="\nScript completed at $(date +"%H:%M:%S")"
 
 # === Send Email via SES ===
-echo "📧 Sending email notification via AWS SES..." | tee -a "$LOG_FILE"
-aws ses send-email \
+echo "📧 Sending email notification via AWS SES..."
+/usr/local/bin/aws ses send-email \
   --region "$REGION" \
   --from "$EMAIL_FROM" \
   --destination "ToAddresses=$EMAIL_TO" \
   --message "Subject={Data='${SUBJECT}'},Body={Text={Data='${EMAIL_BODY}'}}"
 
 if [ $? -eq 0 ]; then
-    echo "✅ Email sent to $EMAIL_TO" | tee -a "$LOG_FILE"
+    echo "✅ Email sent to $EMAIL_TO"
 else
-    echo "❌ Failed to send email via SES" | tee -a "$LOG_FILE"
+    echo "❌ Failed to send email via SES"
 fi
 
