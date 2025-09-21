@@ -9,14 +9,16 @@ TIMESTAMP="$TODAY-$TIME_NOW"        # Combined suffix
 
 S3_BUCKET="martok-bucket"
 S3_PREFIX="sql-baks/$DATE_FOLDER"
-BACKUP_DIR="/tmp/sql-backups"
+BACKUP_DIR="/tmp/sql-backups"       # ensure ubuntu owns this dir
 LOG_DIR="/home/ubuntu/logs"
 LOG_FILE="$LOG_DIR/${DATE_FOLDER}.sql.log"
-MY_CNF="/home/ubuntu/.my.cnf"
+MY_CNF="/home/ubuntu/.my.cnf"       # running as ubuntu
 
 EMAIL_FROM="patrick@powdermonkey.eu"
 EMAIL_TO="patrick@powdermonkey.eu"
-REGION="eu-west-3"
+REGION="eu-west-2"
+
+AWS="/usr/local/bin/aws"            # cron-safe path
 
 SUBJECT="✅ Martok MariaDB Backup Report – $DATE_FOLDER"
 EMAIL_BODY=""
@@ -25,10 +27,17 @@ ERRORS=()
 # === Ensure directories exist ===
 mkdir -p "$BACKUP_DIR" "$LOG_DIR"
 
+# Fast-fail if backup dir isn’t writable (avoids noisy per-DB failures)
+if [ ! -w "$BACKUP_DIR" ]; then
+  echo "❌ $BACKUP_DIR is not writable by $(whoami). Fix with:"
+  echo "   sudo chown ubuntu:ubuntu $BACKUP_DIR && sudo chmod 700 $BACKUP_DIR"
+  exit 1
+fi
+
 # === Cleanup trap on exit ===
 cleanup() {
     echo "🧹 Cleaning up temporary files..." | tee -a "$LOG_FILE"
-    rm -rf "$BACKUP_DIR"/*
+    rm -f "$BACKUP_DIR"/*.sql 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -36,18 +45,26 @@ trap cleanup EXIT
 echo "📦 Starting MariaDB backup at $TIMESTAMP..." | tee "$LOG_FILE"
 EMAIL_BODY+="Martok MariaDB backup started at $TIMESTAMP\n\n"
 
-# === Get list of user databases ===
-databases=$(mysql --defaults-extra-file="$MY_CNF" -e "SHOW DATABASES;" \
-  | grep -Ev "Database|information_schema|performance_schema|mysql|sys")
+# === Determine databases to back up ===
+if [ $# -gt 0 ]; then
+    # Manual mode: single DB passed as argument
+    databases="$1"
+else
+    # Cron mode: all user DBs
+    databases=$(mysql --defaults-extra-file="$MY_CNF" -e "SHOW DATABASES;" \
+      | grep -Ev "^(Database|information_schema|performance_schema|mysql|sys)$" || true)
+fi
 
-if [ -z "$databases" ]; then
-    ERR="❌ No user databases found or connection failed."
+if [ -z "${databases:-}" ]; then
+    ERR="❌ No databases found or connection failed."
     echo "$ERR" | tee -a "$LOG_FILE"
     EMAIL_BODY+="$ERR\n"
     SUBJECT="❌ MariaDB Backup FAILED – $DATE_FOLDER"
     ERRORS+=("$ERR")
 else
     while IFS= read -r db; do
+        [ -z "$db" ] && continue  # skip blanks
+
         SQL_NAME="${db}_${TIMESTAMP}.sql"
         TAR_NAME="${db}-${TIMESTAMP}.tar.gz"
         SQL_PATH="$BACKUP_DIR/$SQL_NAME"
@@ -58,6 +75,7 @@ else
             ERR="❌ Failed to dump $db"
             echo "$ERR" | tee -a "$LOG_FILE"
             ERRORS+=("$ERR")
+            rm -f "$SQL_PATH" 2>/dev/null || true
             continue
         fi
 
@@ -70,20 +88,21 @@ else
             ERR="❌ Archive $TAR_NAME is empty or failed to create"
             echo "$ERR" | tee -a "$LOG_FILE"
             ERRORS+=("$ERR")
+            rm -f "$TAR_PATH" 2>/dev/null || true
             continue
         elif ! gzip -t "$TAR_PATH" &>/dev/null; then
             ERR="❌ Archive $TAR_NAME is corrupt"
             echo "$ERR" | tee -a "$LOG_FILE"
             ERRORS+=("$ERR")
+            rm -f "$TAR_PATH" 2>/dev/null || true
             continue
         fi
 
-        echo "☁️ Uploading to s3://$S3_BUCKET/$S3_PREFIX/$TAR_NAME" | tee -a "$LOG_FILE"
+        echo "  Uploading to s3://$S3_BUCKET/$S3_PREFIX/$TAR_NAME" | tee -a "$LOG_FILE"
         # Retry logic for S3 upload
         retries=0
         max_retries=3
-        upload_success=0
-        until aws s3 cp "$TAR_PATH" "s3://$S3_BUCKET/$S3_PREFIX/$TAR_NAME" --region "$REGION"; do
+        until "$AWS" s3 cp "$TAR_PATH" "s3://$S3_BUCKET/$S3_PREFIX/$TAR_NAME" --region "$REGION"; do
             retries=$((retries + 1))
             if [ $retries -ge $max_retries ]; then
                 ERR="❌ Upload failed after $max_retries attempts for $TAR_NAME"
@@ -120,7 +139,7 @@ EMAIL_BODY+="\nBackup script completed at $(date +"%H:%M:%S")"
 
 # === Send Email via SES ===
 echo "📧 Sending email notification via AWS SES..." | tee -a "$LOG_FILE"
-aws ses send-email \
+/usr/local/bin/aws ses send-email \
   --region "$REGION" \
   --from "$EMAIL_FROM" \
   --destination "ToAddresses=$EMAIL_TO" \

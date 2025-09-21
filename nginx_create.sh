@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nginx_create.sh — Bootstrap a Drupal (7/9/10) or WordPress site on Nginx (FastCGI + Certbot ready)
+# nginx_create.sh — Bootstrap a Drupal (7/10), WordPress, or Generic PHP site on Nginx (FastCGI + Certbot ready)
 # Usage:
 #   sudo ./nginx_create.sh example.com
 
@@ -34,10 +34,10 @@ ACCESS_LOG="/var/log/nginx/$DOMAIN.access.log"
 ERROR_LOG="/var/log/nginx/$DOMAIN.error.log"
 
 # --- Choose CMS type ---
-read -r -p "❓ Which CMS are you setting up? (drupal/wp/d7) [drupal]: " CMS_TYPE
-CMS_TYPE="${CMS_TYPE:-drupal}"
+read -r -p "❓ Which CMS are you setting up? (d10/wp/d7/generic) [d10]: " CMS_TYPE
+CMS_TYPE="${CMS_TYPE:-d10}"
 
-if [[ "$CMS_TYPE" == "drupal" ]]; then
+if [[ "$CMS_TYPE" == "d10" || "$CMS_TYPE" == "drupal" ]]; then
     SITE_ROOT="$SITE_ROOT/web"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
     CMS_BLOCK=$(cat <<'DRUPAL'
@@ -114,7 +114,7 @@ DRUPAL7
 EOF
 )
 
-else
+elif [[ "$CMS_TYPE" == "wp" ]]; then
     SITE_ROOT="$SITE_ROOT"
     FRONT_CONTROLLER='try_files $uri $uri/ /index.php?$args;'
     CMS_BLOCK=$(cat <<'WP'
@@ -138,6 +138,33 @@ WP
     }
 EOF
 )
+
+elif [[ "$CMS_TYPE" == "generic" ]]; then
+    SITE_ROOT="$SITE_ROOT"
+    FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
+    CMS_BLOCK=$(cat <<'GENERIC'
+    # Generic PHP site config — deny hidden files
+    location ~ (^|/)\. {
+        deny all;
+    }
+
+    # Cache static assets (images, fonts, CSS, JS)
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg|mp4|ogg|webm)$ {
+        expires 6M;
+        access_log off;
+        log_not_found off;
+    }
+GENERIC
+)
+    CACHE_BYPASS=$(cat <<'EOF'
+    set $no_cache 0;
+    # No CMS-specific session handling
+EOF
+)
+
+else
+    echo "❌ Unknown CMS type: $CMS_TYPE"
+    exit 1
 fi
 
 # --- Site directory check ---

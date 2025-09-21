@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# For Manual use:
+# /home/ubuntu/fs_bak.sh prod-ergsy.com
+
 # === Configuration ===
 DATE_FOLDER=$(date +"%Y-%m-%d")      # For S3 folder (readable)
 TODAY=$(date +"%Y%m%d")             # For filenames (no dashes)
@@ -8,7 +11,7 @@ TIME_NOW=$(date +"%H%M")            # For filenames (no colon)
 TIMESTAMP="$TODAY-$TIME_NOW"        # Combined suffix
 
 SOURCE_DIR="/var/www"
-TMP_DIR="/tmp/fs-backups"
+TMP_DIR="/home/ubuntu/fs-backups"   # moved out of /tmp for more space
 LOG_DIR="/home/ubuntu/logs"
 LOG_FILE="$LOG_DIR/${DATE_FOLDER}.fs.log"
 
@@ -46,8 +49,23 @@ cd "$SOURCE_DIR" || {
     ERRORS+=("$ERR")
 }
 
-# === Process each prod* directory ===
-for full_path in $SOURCE_DIR/prod*/; do
+# === Determine target directories ===
+if [ $# -gt 0 ]; then
+    # Manual mode: user specified a folder
+    TARGET_DIR="$SOURCE_DIR/$1"
+    if [ -d "$TARGET_DIR" ]; then
+        DIRS_TO_BACKUP=("$TARGET_DIR")
+    else
+        echo "❌ Specified directory $TARGET_DIR does not exist."
+        exit 1
+    fi
+else
+    # Cron mode: all prod* dirs
+    DIRS_TO_BACKUP=($SOURCE_DIR/prod*/)
+fi
+
+# === Process directories ===
+for full_path in "${DIRS_TO_BACKUP[@]}"; do
     [ -d "$full_path" ] || continue
 
     folder_name=$(basename "$full_path")
@@ -56,7 +74,12 @@ for full_path in $SOURCE_DIR/prod*/; do
     snapshot_dir="${TMP_DIR}/${folder_name}-snapshot"
 
     echo "📋 Creating snapshot for $folder_name → $snapshot_dir"
-    rsync -a --delete "$full_path" "$snapshot_dir" || {
+    rsync -a --delete \
+      --exclude='.git' \
+      --exclude='web/sites/default/files/css' \
+      --exclude='web/sites/default/files/js' \
+      --exclude='web/sites/default/files/php' \
+      "$full_path" "$snapshot_dir" || {
         ERR="❌ Rsync failed for $folder_name"
         echo "$ERR"
         ERRORS+=("$ERR")
@@ -72,7 +95,7 @@ for full_path in $SOURCE_DIR/prod*/; do
         continue
     }
 
-    echo "☁️ Uploading to s3://$S3_BUCKET/$S3_PREFIX/$archive_name"
+    echo "  Uploading to s3://$S3_BUCKET/$S3_PREFIX/$archive_name"
     /usr/local/bin/aws s3 cp "$archive_path" "s3://$S3_BUCKET/$S3_PREFIX/$archive_name" --region "$REGION" && {
         echo "✅ Upload successful. Cleaning up..."
         rm -f "$archive_path"
