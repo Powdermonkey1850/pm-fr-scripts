@@ -183,10 +183,28 @@ else
 fi
 log ""
 
+
+
 ## 6. Listening services
 log "➡ Checking listening network services..."
-ss -tulwn | head -n 20 | tee -a "$REPORT" >> "$LOG_FILE"
+OPEN=$(ss -tulwn | awk '$5 ~ /0\.0\.0\.0|:::/{print}')
+
+if [ -n "$OPEN" ]; then
+    # Exclude common/expected ports (22, 80, 443)
+    UNEXPECTED=$(echo "$OPEN" | awk '!($5 ~ /:22$|:80$|:443$/)')
+
+    if [ -n "$UNEXPECTED" ]; then
+        log "❌ Unexpected services listening on all interfaces:"
+        log "$UNEXPECTED"
+        set_status "WARNING"
+    else
+        log "✅ Only expected services (22/80/443) are listening on all interfaces."
+    fi
+else
+    log "✅ No services are listening on all interfaces."
+fi
 log ""
+
 
 # === Determine final subject ===
 case "$STATUS" in
