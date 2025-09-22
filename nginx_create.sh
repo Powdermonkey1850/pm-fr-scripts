@@ -20,25 +20,13 @@ fi
 
 DOMAIN="$1"
 
-# --- Ask PHP version ---
-read -r -p "❓ Which PHP version do you want to use? (7.4/8.0/8.1/8.2/8.3) [8.3]: " PHP_VERSION
-PHP_VERSION="${PHP_VERSION:-8.3}"
-PHP_SOCKET="/run/php/php${PHP_VERSION}-fpm.sock"
-
-# --- Paths and filenames ---
-NGINX_CONF_NAME="prod-$DOMAIN.conf"
-NGINX_CONF_PATH="/etc/nginx/sites-available/$NGINX_CONF_NAME"
-NGINX_SYMLINK="/etc/nginx/sites-enabled/$NGINX_CONF_NAME"
-SITE_ROOT="/var/www/prod-$DOMAIN"
-ACCESS_LOG="/var/log/nginx/$DOMAIN.access.log"
-ERROR_LOG="/var/log/nginx/$DOMAIN.error.log"
-
 # --- Choose CMS type ---
-read -r -p "❓ Which CMS are you setting up? (d10/wp/d7/generic) [d10]: " CMS_TYPE
-CMS_TYPE="${CMS_TYPE:-d10}"
+read -r -p "❓ Which CMS are you setting up? (D7/D10/WP/Generic) [D10]: " CMS_TYPE
+CMS_TYPE="${CMS_TYPE:-D10}"
+CMS_TYPE=$(echo "$CMS_TYPE" | tr '[:upper:]' '[:lower:]')  # normalize input to lowercase
 
 if [[ "$CMS_TYPE" == "d10" || "$CMS_TYPE" == "drupal" ]]; then
-    SITE_ROOT="$SITE_ROOT/web"
+    SITE_ROOT="/var/www/prod-$DOMAIN/web"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
     CMS_BLOCK=$(cat <<'DRUPAL'
     # Deny access to hidden and sensitive files
@@ -72,7 +60,7 @@ EOF
 )
 
 elif [[ "$CMS_TYPE" == "d7" ]]; then
-    SITE_ROOT="$SITE_ROOT"
+    SITE_ROOT="/var/www/prod-$DOMAIN"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
     CMS_BLOCK=$(cat <<'DRUPAL7'
     # Deny access to hidden and sensitive files
@@ -115,7 +103,7 @@ EOF
 )
 
 elif [[ "$CMS_TYPE" == "wp" ]]; then
-    SITE_ROOT="$SITE_ROOT"
+    SITE_ROOT="/var/www/prod-$DOMAIN"
     FRONT_CONTROLLER='try_files $uri $uri/ /index.php?$args;'
     CMS_BLOCK=$(cat <<'WP'
     # Deny access to hidden files
@@ -140,7 +128,7 @@ EOF
 )
 
 elif [[ "$CMS_TYPE" == "generic" ]]; then
-    SITE_ROOT="$SITE_ROOT"
+    SITE_ROOT="/var/www/prod-$DOMAIN"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
     CMS_BLOCK=$(cat <<'GENERIC'
     # Generic PHP site config — deny hidden files
@@ -166,6 +154,18 @@ else
     echo "❌ Unknown CMS type: $CMS_TYPE"
     exit 1
 fi
+
+# --- Ask PHP version ---
+read -r -p "❓ Which PHP version do you want to use? (7.0/7.4/8.0/8.1/8.2/8.3) [8.3]: " PHP_VERSION
+PHP_VERSION="${PHP_VERSION:-8.3}"
+PHP_SOCKET="/run/php/php${PHP_VERSION}-fpm.sock"
+
+# --- Paths and filenames ---
+NGINX_CONF_NAME="prod-$DOMAIN.conf"
+NGINX_CONF_PATH="/etc/nginx/sites-available/$NGINX_CONF_NAME"
+NGINX_SYMLINK="/etc/nginx/sites-enabled/$NGINX_CONF_NAME"
+ACCESS_LOG="/var/log/nginx/$DOMAIN.access.log"
+ERROR_LOG="/var/log/nginx/$DOMAIN.error.log"
 
 # --- Site directory check ---
 if [ ! -d "$SITE_ROOT" ]; then
