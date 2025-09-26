@@ -34,12 +34,13 @@ if [ ! -f "$HOME/.ssh/$KEY_FILE" ]; then
 fi
 
 # Append new host entry if not already present
-if grep -q "Host $HOST_ALIAS" "$CONFIG_FILE"; then
-  echo "⚠️ Host $HOST_ALIAS already exists in $CONFIG_FILE, skipping append."
+if grep -qE "^[[:space:]]*Host[[:space:]]+$HOST_ALIAS\$" "$CONFIG_FILE"; then
+  echo "  Host $HOST_ALIAS already exists in $CONFIG_FILE, skipping append."
 else
   cat >> "$CONFIG_FILE" <<EOF
 
 # GitHub project: $REPO_ALIAS
+# git clone git@${HOST_ALIAS}:powdermonkey1850/${REPO_ALIAS}.git
 Host $HOST_ALIAS
     HostName github.com
     User git
@@ -53,32 +54,9 @@ fi
 chmod 600 "$CONFIG_FILE"
 chmod 700 "$HOME/.ssh"
 
-# Check if we're inside a Git repo
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "📂 Detected Git repository in $(pwd)"
-  read -rp "Do you want to configure the 'origin' remote for $HOST_ALIAS? (y/n): " CONFIGURE_REMOTE
-
-  if [[ "$CONFIGURE_REMOTE" =~ ^[Yy]$ ]]; then
-    if git remote get-url origin >/dev/null 2>&1; then
-      # Extract current repo path from origin URL
-      CURRENT_URL=$(git remote get-url origin)
-      REPO_PATH=$(echo "$CURRENT_URL" | sed -E 's/.*[:\/](Powdermonkey1850\/[^ ]+)(\.git)?$/\1/')
-
-      if [ -n "$REPO_PATH" ]; then
-        NEW_URL="git@${HOST_ALIAS}:${REPO_PATH}.git"
-        git remote set-url origin "$NEW_URL"
-        echo "✅ Updated 'origin' to $NEW_URL"
-      else
-        echo "⚠️ Could not detect repo path from $CURRENT_URL"
-      fi
-    else
-      # No origin exists → add one
-      NEW_URL="git@${HOST_ALIAS}:Powdermonkey1850/${REPO_ALIAS}.git"
-      git remote add origin "$NEW_URL"
-      echo "✅ Added new 'origin' remote: $NEW_URL"
-    fi
-  fi
-else
-  echo "ℹ️ Not inside a Git repo, skipping remote configuration."
-fi
+# Print helpful usage info
+echo
+echo "👉 To point a repo to this config, run:"
+echo "git remote set-url origin git@${HOST_ALIAS}:powdermonkey1850/${REPO_ALIAS}.git"
+echo
 

@@ -56,13 +56,11 @@ log() {
 # captures stdout/stderr and returns exit code
 safe_cmd() {
     # Usage: out=$(safe_cmd command args...)
-    # We'll run command, print its stdout/stderr to a temp file, return exit code
     "$@" 2>&1
     return $?
 }
 
 # === Start Report ===
-# always append to LOG_FILE; create REPORT fresh
 : > "$REPORT"
 log "🔒 Security Check Report"
 log "Host: $HOSTNAME"
@@ -75,7 +73,6 @@ log ""
 ## 1. Pending security updates
 log "➡ Checking for pending security updates..."
 if command -v apt-get &>/dev/null; then
-    # Only list real upgrade candidates with 'Inst' and security
     UPDATES=$(apt-get -s upgrade 2>/dev/null | grep -i "^Inst" | grep -i security || true)
     if [ -n "$UPDATES" ]; then
         log "  Security updates available:"
@@ -93,7 +90,6 @@ log ""
 ## 2. AWS Security Group check
 log "➡ Checking AWS Security Groups for this instance..."
 
-# === AWS Metadata (IMDSv2) ===
 TOKEN=$(curl -s -m 3 -X PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)
 
@@ -112,7 +108,6 @@ else
 fi
 
 if [ -n "$INSTANCE_ID" ] && [ -x "$AWS" ]; then
-    # describe instances to get SG ids
     SG_IDS=$($AWS ec2 describe-instances \
         --instance-ids "$INSTANCE_ID" \
         --region "$REGION" \
@@ -132,7 +127,6 @@ if [ -n "$INSTANCE_ID" ] && [ -x "$AWS" ]; then
                 --query "SecurityGroups[].IpPermissions" \
                 --output json 2>/dev/null || true)
 
-            # Check for SSH (22)
             if echo "$RULES" | grep -q '"FromPort": 22'; then
                 if echo "$RULES" | grep -q '0.0.0.0/0'; then
                     log "❌ SG $sg allows SSH (22/tcp) from 0.0.0.0/0 (worldwide)!"
@@ -142,7 +136,6 @@ if [ -n "$INSTANCE_ID" ] && [ -x "$AWS" ]; then
                 fi
             fi
 
-            # Check for RDP (3389)
             if echo "$RULES" | grep -q '"FromPort": 3389'; then
                 if echo "$RULES" | grep -q '0.0.0.0/0'; then
                     log "❌ SG $sg allows RDP (3389/tcp) from 0.0.0.0/0!"
@@ -195,7 +188,6 @@ log ""
 
 ## 4. World-writable files
 log "➡ Checking for world-writable files..."
-# exclude proc/sys and other noisy mounts, restrict to filesystem root check
 WW=$(find / -xdev -not -path "/proc/*" -not -path "/sys/*" -not -path "/run/*" -type f -perm -0002 2>/dev/null | head -n 20 || true)
 if [ -n "$WW" ]; then
     log "  World-writable files found (showing first 20):"
@@ -205,9 +197,7 @@ else
     log "✅ No world-writable files found."
 fi
 
-# Check /tmp sticky bit
 if [ -d /tmp ]; then
-    # stat -c %A prints perms; check for a 't' in the last char (others may differ)
     STICKY=$(stat -c '%A' /tmp 2>/dev/null || true)
     if [[ "$STICKY" != *t ]]; then
         log "❌ /tmp does not appear to have the sticky bit set!"
@@ -221,7 +211,6 @@ log ""
 ## 5. UID 0 users
 log "➡ Checking for multiple UID 0 users..."
 UID0=$(awk -F: '($3 == 0) {print $1}' /etc/passwd || true)
-# count lines while guarding empty var
 UID0_COUNT=0
 if [ -n "$UID0" ]; then
     UID0_COUNT=$(printf "%s\n" "$UID0" | wc -l)
@@ -236,21 +225,14 @@ else
 fi
 log ""
 
-
 ## 6. Listening services (robust parsing with ss -H)
 log "➡ Checking listening network services..."
 LISTEN_ALL=$(ss -H -tuln 2>/dev/null || true)
-
-# Extract Local Address:Port (always field 5 in -n -l -H mode)
 ADDRESSES=$(echo "$LISTEN_ALL" | awk '{print $5}')
-
-# Services listening on all interfaces (0.0.0.0 or [::])
 OPEN=$(echo "$ADDRESSES" | grep -E "^(0\.0\.0\.0:|\[::\]:)" || true)
 
 if [ -n "$OPEN" ]; then
-    # Exclude expected ports (22, 80, 443)
     UNEXPECTED=$(echo "$OPEN" | grep -Ev ":(22|80|443)$" || true)
-
     if [ -n "$UNEXPECTED" ]; then
         log "❌ Services listening on all interfaces (check carefully):"
         log "$UNEXPECTED"
@@ -262,7 +244,6 @@ else
     log "✅ No services are listening on all interfaces."
 fi
 
-# --- Varnish checks ---
 if echo "$ADDRESSES" | grep -qE "^(0\.0\.0\.0:6081|\[::\]:6081)"; then
     log "❌ Varnish port 6081 is exposed on all interfaces!"
     set_status "CRITICAL"
@@ -277,28 +258,41 @@ elif echo "$ADDRESSES" | grep -q "^127\.0\.0\.1:6082$"; then
     log "✅ Varnish admin port 6082 is bound to localhost (safe)."
 fi
 
-# --- MySQL check ---
 if echo "$ADDRESSES" | grep -q "^127\.0\.0\.1:3306$"; then
     log "✅ MySQL (3306) is bound only to localhost (safe)."
 fi
 
-
-
-
-# Always include a short context dump
 log ""
 log "Listening sockets (short):"
 log "$(ss -tulwn | head -n 50 | sed 's/^/  /')"
 log ""
 
-
-
-# Check explicitly if MySQL is bound only to 127.0.0.1
 MYSQL_LOCAL=$(echo "$ADDRESSES" | grep -E "^127\.0\.0\.1:3306$" || true)
 if [ -n "$MYSQL_LOCAL" ]; then
     log "✅ MySQL (3306) is bound only to localhost (safe)."
 fi
 
+## 7. PHP 5.6 usage check
+log "➡ Checking that no sites are using PHP 5.6..."
+
+PHP56_SITES=$(grep -R "php5\.6" /etc/nginx/sites-enabled/ 2>/dev/null | awk -F: '{print $1}' | sort -u || true)
+if [ -n "$PHP56_SITES" ]; then
+    log "❌ The following site configs are using PHP 5.6 (not allowed):"
+    log "$PHP56_SITES"
+    set_status "CRITICAL"
+else
+    log "✅ No sites are using PHP 5.6 in nginx configs."
+fi
+
+PHP56_RUNNING=$(ps -eo cmd | grep -E "php.?5\.6.*fpm" | grep -v grep || true)
+if [ -n "$PHP56_RUNNING" ]; then
+    log "❌ PHP 5.6-FPM process is running (should only exist for emergencies):"
+    log "$PHP56_RUNNING"
+    set_status "CRITICAL"
+else
+    log "✅ No PHP 5.6-FPM processes are running."
+fi
+log ""
 
 # === Determine final subject ===
 case "$STATUS" in
@@ -313,14 +307,9 @@ case "$STATUS" in
         ;;
 esac
 
-
-
-
 # === Send Email ===
 BODY=$(cat "$REPORT" || true)
-
 if [ -x "$AWS" ]; then
-    # ensure SES call failure won't kill the script
     set +e
     $AWS ses send-email \
       --region "$REGION" \
@@ -330,7 +319,6 @@ if [ -x "$AWS" ]; then
       >/dev/null 2>&1
     SES_STATUS=$?
     set -e +o pipefail || true
-    # After the send attempt, restore behaviour: we deliberately continue
     if [ "$SES_STATUS" -eq 0 ]; then
         log "✅ Report emailed to $EMAIL_TO"
     else
@@ -343,10 +331,8 @@ else
 fi
 
 # === Cleanup ===
-# leave the log file intact; remove the temp report
 rm -f "$REPORT" || true
 
-# Exit codes: 0 OK, 1 WARNING, 2 CRITICAL
 case "$STATUS" in
     OK) exit 0 ;;
     WARNING) exit 1 ;;

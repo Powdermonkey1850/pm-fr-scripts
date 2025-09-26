@@ -11,7 +11,7 @@ TIME_NOW=$(date +"%H%M")            # For filenames (no colon)
 TIMESTAMP="$TODAY-$TIME_NOW"        # Combined suffix
 
 SOURCE_DIR="/var/www"
-TMP_DIR="/home/ubuntu/tmp/fs-backups"   # temporary backup folder
+TMP_DIR="/home/ubuntu/fs-backups"   # moved out of /tmp for more space
 LOG_DIR="/home/ubuntu/logs"
 LOG_FILE="$LOG_DIR/${DATE_FOLDER}.fs.log"
 
@@ -27,16 +27,15 @@ EMAIL_BODY=""
 ERRORS=()
 
 # === Ensure directories exist ===
-mkdir -p "$TMP_DIR"
-mkdir -p "$LOG_DIR"
+mkdir -p "$TMP_DIR" "$LOG_DIR"
 
 # === Redirect all output to log file (tailable) ===
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 # === Cleanup trap on script exit ===
 cleanup() {
-    echo "🧹 Removing temporary backup folder: $TMP_DIR"
-    rm -rf "$TMP_DIR"
+    echo "🧹 Cleaning up any leftover temporary files..."
+    rm -rf "$TMP_DIR"/*
 }
 trap cleanup EXIT
 
@@ -62,7 +61,7 @@ if [ $# -gt 0 ]; then
     fi
 else
     # Cron mode: all prod* dirs
-    DIRS_TO_BACKUP=($SOURCE_DIR/prod*/ )
+    DIRS_TO_BACKUP=($SOURCE_DIR/prod*/)
 fi
 
 # === Process directories ===
