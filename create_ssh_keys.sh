@@ -48,3 +48,9 @@ echo "✅ SSH key generated:"
 echo "  Private: $KEY_PATH"
 echo "  Public : $KEY_PATH.pub"
 
+# Print the public key for copy-paste
+echo ""
+echo "📋 Public key (copy and paste this into your authorized_keys):"
+cat "$KEY_PATH.pub"
+echo ""
+
