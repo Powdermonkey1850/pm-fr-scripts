@@ -29,21 +29,47 @@ if [[ "$CMS_TYPE" == "d10" || "$CMS_TYPE" == "drupal" ]]; then
     SITE_ROOT="/var/www/prod-$DOMAIN/web"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
     CMS_BLOCK=$(cat <<'DRUPAL'
-    # Deny access to hidden and sensitive files
+    # Allow Drupal to generate missing image style derivatives
+    location ~* /sites/.*/files/styles/ {
+        try_files $uri @rewrite;
+    }
+
+    # Allow Drupal to generate missing aggregated CSS/JS
+    location ~* /sites/.*/files/css/ {
+        try_files $uri @rewrite;
+    }
+    location ~* /sites/.*/files/js/ {
+        try_files $uri @rewrite;
+    }
+
+    # Rewrite helper
+    location @rewrite {
+        rewrite ^ /index.php;
+    }
+
+    # Security: deny execution of PHP and sensitive files in core/vendor/etc
+    location ~* ^/(core|vendor|modules|profiles|themes)/.*\.(engine|inc|install|make|module|profile|po|sh|sql|theme|tpl(\.php)?|xtmpl|php)$ {
+        deny all;
+    }
+
+    # Security: deny hidden files (.git, .htaccess, etc.)
     location ~ (^|/)\. {
         deny all;
     }
-    location ~* \.(engine|inc|install|make|module|profile|po|sh|.*sql|theme|tpl(\.php)?|xtmpl)$ {
-        deny all;
-    }
-    location ~* ^/vendor/ {
-        deny all;
-    }
+
+    # Security: block composer files
     location ~* ^/composer\.(json|lock)$ {
         deny all;
     }
 
-    # Cache static assets
+    # Allow static assets in core, modules, themes, libraries
+    location ~* ^/(core|modules|profiles|themes|libraries)/.*\.(css|js|gif|jpe?g|png|svg|eot|woff2?|ttf)$ {
+        expires 6M;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Cache static assets generally
     location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg|mp4|ogg|webm)$ {
         expires 6M;
         access_log off;
