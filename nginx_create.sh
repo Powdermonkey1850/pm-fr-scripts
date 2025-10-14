@@ -30,21 +30,30 @@ if [[ "$CMS_TYPE" == "d10" || "$CMS_TYPE" == "drupal" ]]; then
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
     CMS_BLOCK=$(cat <<'DRUPAL'
     # Allow Drupal to generate missing image style derivatives
-    location ~* /sites/.*/files/styles/ {
+    location ~* ^/sites/.*/files/styles/ {
         try_files $uri @rewrite;
     }
 
     # Allow Drupal to generate missing aggregated CSS/JS
-    location ~* /sites/.*/files/css/ {
-        try_files $uri @rewrite;
-    }
-    location ~* /sites/.*/files/js/ {
+    location ~* ^/sites/.*/files/(css|js)/ {
         try_files $uri @rewrite;
     }
 
-    # Rewrite helper
+    # Allow Drupal to serve public files and rewrite missing ones to index.php
+    location ~* ^/sites/.*/files/ {
+        try_files $uri /index.php?$query_string;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Rewrite handler for Drupal
     location @rewrite {
-        rewrite ^ /index.php;
+        rewrite ^ /index.php?$query_string;
+    }
+
+    # Security: deny execution of PHP in user-uploaded files
+    location ~* ^/sites/.*/files/.*\.php$ {
+        deny all;
     }
 
     # Security: deny execution of PHP and sensitive files in core/vendor/etc
@@ -60,13 +69,6 @@ if [[ "$CMS_TYPE" == "d10" || "$CMS_TYPE" == "drupal" ]]; then
     # Security: block composer files
     location ~* ^/composer\.(json|lock)$ {
         deny all;
-    }
-
-    # Allow static assets in core, modules, themes, libraries
-    location ~* ^/(core|modules|profiles|themes|libraries)/.*\.(css|js|gif|jpe?g|png|svg|eot|woff2?|ttf)$ {
-        expires 6M;
-        access_log off;
-        log_not_found off;
     }
 
     # Cache static assets generally
