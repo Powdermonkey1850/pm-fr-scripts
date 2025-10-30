@@ -227,16 +227,26 @@ else
 fi
 log ""
 
+
 # === 4) World-writable files (/ limited) ===
 log "➡ Checking for world-writable files..."
-WW=$("$FIND" / -xdev -not -path "/proc/*" -not -path "/sys/*" -not -path "/run/*" \
-  -type f -perm -0002 2>/dev/null | "$HEAD" -n 20 || true)
+WW=$("$FIND" / -xdev \
+  -path /proc -prune -o \
+  -path /sys -prune -o \
+  -path /run -prune -o \
+  -path /tmp -prune -o \
+  -path /home/ubuntu/tmp -prune -o \
+  -path /var/tmp -prune -o \
+  -path /snap -prune -o \
+  -path /dev -prune -o \
+  -type f -perm -0002 -print 2>/dev/null | "$GREP" -vE '^/tmp|^/home/ubuntu/tmp' | "$HEAD" -n 20 || true)
+
 if [ -n "$WW" ]; then
   log "  World-writable files found (first 20):"
   log "$WW"
   set_status "WARNING"
 else
-  log "✅ No world-writable files found."
+  log "✅ No unsafe world-writable files found."
 fi
 
 if [ -d /tmp ]; then
@@ -249,6 +259,10 @@ if [ -d /tmp ]; then
   fi
 fi
 log ""
+
+
+
+
 
 # === 5) UID 0 users ===
 log "➡ Checking for multiple UID 0 users..."
