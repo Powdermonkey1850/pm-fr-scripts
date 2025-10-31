@@ -77,7 +77,7 @@ for cfg in "${WP_CONFIGS[@]}"; do
   wp_cron_path="$site_dir/wp-cron.php"
   if [ -f "$wp_cron_path" ]; then
     # IMPORTANT: use absolute sudo path; cron won't expand aliases
-    echo "*/30 * * * * /usr/bin/sudo -u www-data /usr/bin/php $wp_cron_path > /dev/null 2>&1" >> "$TMPFILE"
+    echo "0 6 * * * /usr/bin/sudo -u www-data /usr/bin/php $wp_cron_path > /dev/null 2>&1" >> "$TMPFILE"
     log "   ✅ Queued cron line for $site_name ($wp_cron_path)"
     ((added++)) || true
   else
@@ -108,11 +108,9 @@ sudo crontab -u root -l > "$CURCRON" 2>/dev/null || true
 sed -i '/# WP Cron Fixes/,/# End WP Cron Fixes/d' "$CURCRON"
 # Append fresh block with blank lines above & below
 {
-  echo ""
   echo "# WP Cron Fixes"
   cat "$TMPFILE"
   echo "# End WP Cron Fixes"
-  echo ""
 } >> "$CURCRON"
 
 # Apply via stdin to avoid file/permission quirks
