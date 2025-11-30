@@ -159,10 +159,6 @@ WP
     if ($http_cookie ~* "wordpress_logged_in_|wp-postpass_|wordpress_sec") {
         set $no_cache 1;
     }
-    # Gravity Forms download links must bypass cache
-    if ($query_string ~* "gf-download") {
-        set $no_cache 1;
-    }
 EOF
 )
 
@@ -198,32 +194,6 @@ fi
 read -r -p "❓ Which PHP version do you want to use? (7.0/7.4/8.0/8.1/8.2/8.3) [8.3]: " PHP_VERSION
 PHP_VERSION="${PHP_VERSION:-8.3}"
 PHP_SOCKET="/run/php/php${PHP_VERSION}-fpm.sock"
-
-# --- Extra per-CMS server-level blocks (e.g. wp-admin handling for WP) ---
-EXTRA_SERVER_BLOCKS=""
-
-if [[ "$CMS_TYPE" == "wp" ]]; then
-    EXTRA_SERVER_BLOCKS=$(cat <<'WPEXTRA'
-    # Ensure all wp-admin PHP files are always passed to PHP-FPM
-    location ~ ^/wp-admin/.*\.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:__PHP_SOCKET__;
-        include fastcgi_params;
-    }
-
-    # Do not cache admin-ajax (important for editors & heartbeat)
-    location ~* /wp-admin/admin-ajax\.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:__PHP_SOCKET__;
-        fastcgi_no_cache 1;
-        fastcgi_cache_bypass 1;
-        include fastcgi_params;
-    }
-WPEXTRA
-)
-    # Inject the real PHP socket path
-    EXTRA_SERVER_BLOCKS="${EXTRA_SERVER_BLOCKS//__PHP_SOCKET__/$PHP_SOCKET}"
-fi
 
 # --- Paths and filenames ---
 NGINX_CONF_NAME="prod-$DOMAIN.conf"
@@ -289,8 +259,6 @@ server {
     location / {
         $FRONT_CONTROLLER
     }
-
-$EXTRA_SERVER_BLOCKS
 
     location ~ \.php\$ {
         include snippets/fastcgi-php.conf;
