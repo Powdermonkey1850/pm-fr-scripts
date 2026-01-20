@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # /home/ubuntu/scripts/git_pull.sh
-# Safely pull updates and run Drupal maintenance tasks.
+# Safely pull updates and enforce production Drupal settings.
 
 set -euo pipefail
 
@@ -48,7 +48,7 @@ fi
 
 echo "🧠 Drupal site detected at: $DRUPAL_ROOT"
 
-# --- RUN DRUSH CACHE REBUILD ---
+# --- DRUSH ---
 DRUSH_BIN="$REPO_ROOT/vendor/drush/drush/drush"
 
 if [[ ! -x "$DRUSH_BIN" ]]; then
@@ -56,15 +56,28 @@ if [[ ! -x "$DRUSH_BIN" ]]; then
   exit 0
 fi
 
-echo "🧹 Running drush cr..."
 cd "$DRUPAL_ROOT"
+
+# --- ENSURE BIGPIPE ENABLED ---
+echo "📦 Ensuring BigPipe is enabled..."
+"$DRUSH_BIN" en big_pipe -y
+
+# --- DISABLE THEME / TWIG DEVELOPMENT MODE ---
+echo "🛑 Disabling theme (Twig) development mode..."
+"$DRUSH_BIN" theme:dev off
+
+# --- ENFORCE BROWSER CACHE (1 DAY) ---
+echo "⏱️  Setting browser cache max-age to 1 day..."
+"$DRUSH_BIN" config:set system.performance cache.page.max_age 86400 -y
+
+# --- CACHE REBUILD ---
+echo "🧹 Running drush cr..."
 "$DRUSH_BIN" cr
 
-# --- RUN FASTCGI CACHE CLEAR ---
+# --- FASTCGI CACHE CLEAR ---
 echo "🚀 Clearing FastCGI cache..."
 /home/ubuntu/scripts/clear_fastcgi_cache.sh
 
-
-echo "✅ Drupal maintenance tasks completed successfully."
+echo "✅ Drupal production enforcement completed successfully."
 exit 0
 
