@@ -28,7 +28,9 @@ sudo chown -R ubuntu:ubuntu "$REPO_ROOT"
 
 # --- PERFORM GIT PULL ---
 cd "$REPO_ROOT"
-echo "⬇️  Executing git pull..."
+echo "   Fetching all remotes (including new branches)..."
+git fetch --all --prune
+echo "   Executing git pull..."
 git pull --ff-only
 echo "✅ Git pull completed successfully."
 
