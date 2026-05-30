@@ -1,7 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
+
 # nginx_create.sh — Bootstrap a Drupal (7/10), WordPress, or Generic PHP site on Nginx (FastCGI + Certbot ready)
 # Usage:
-#   sudo /home/ubuntu/scripts/nginx_create.sh example.com
+#   sudo ./nginx_create.sh example.com
 
 set -euo pipefail
 
@@ -22,42 +23,25 @@ DOMAIN="$1"
 # --- Choose CMS type ---
 read -r -p "❓ Which CMS are you setting up? (D7/D10/WP/Generic) [D10]: " CMS_TYPE
 CMS_TYPE="${CMS_TYPE:-D10}"
-CMS_TYPE=$(echo "$CMS_TYPE" | tr '[:upper:]' '[:lower:]')
+CMS_TYPE=$(echo "$CMS_TYPE" | tr '[:upper:]' '[:lower:]')  # normalize input to lowercase
 
 if [[ "$CMS_TYPE" == "d10" || "$CMS_TYPE" == "drupal" ]]; then
     SITE_ROOT="/var/www/prod-$DOMAIN/web"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
-
-CMS_BLOCK=$(cat <<'DRUPAL'
-    # Security: deny execution of PHP in user-uploaded files
-    location ~* ^/sites/.*/files/.*\.php$ {
-        deny all;
-    }
-
-    # Drupal image styles: serve existing derivatives with long browser cache;
-    # let Drupal generate missing derivatives.
+    CMS_BLOCK=$(cat <<'DRUPAL'
+    # Allow Drupal to generate missing image style derivatives
     location ~* ^/sites/.*/files/styles/ {
         try_files $uri @rewrite;
-        expires 1y;
-        add_header Cache-Control "public, max-age=31536000, immutable";
-        access_log off;
-        log_not_found off;
     }
 
-    # Drupal aggregated CSS/JS
+    # Allow Drupal to generate missing aggregated CSS/JS
     location ~* ^/sites/.*/files/(css|js)/ {
         try_files $uri @rewrite;
-        expires 1y;
-        add_header Cache-Control "public, max-age=31536000, immutable";
-        access_log off;
-        log_not_found off;
     }
 
-    # Public uploaded files
+    # Allow Drupal to serve public files and rewrite missing ones to index.php
     location ~* ^/sites/.*/files/ {
         try_files $uri /index.php?$query_string;
-        expires 1y;
-        add_header Cache-Control "public, max-age=31536000";
         access_log off;
         log_not_found off;
     }
@@ -67,12 +51,17 @@ CMS_BLOCK=$(cat <<'DRUPAL'
         rewrite ^ /index.php?$query_string;
     }
 
+    # Security: deny execution of PHP in user-uploaded files
+    location ~* ^/sites/.*/files/.*\.php$ {
+        deny all;
+    }
+
     # Security: deny execution of PHP and sensitive files in core/vendor/etc
     location ~* ^/(core|vendor|modules|profiles|themes)/.*\.(engine|inc|install|make|module|profile|po|sh|sql|theme|tpl(\.php)?|xtmpl|php)$ {
         deny all;
     }
 
-    # Security: deny hidden files
+    # Security: deny hidden files (.git, .htaccess, etc.)
     location ~ (^|/)\. {
         deny all;
     }
@@ -83,15 +72,13 @@ CMS_BLOCK=$(cat <<'DRUPAL'
     }
 
     # Cache static assets generally
-    location ~* \.(?:avif|webp|ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg|mp4|ogg|webm)$ {
-        expires 1y;
-        add_header Cache-Control "public, max-age=31536000, immutable";
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg|mp4|ogg|webm)$ {
+        expires 6M;
         access_log off;
         log_not_found off;
     }
 DRUPAL
 )
-
     CACHE_BYPASS=$(cat <<'EOF'
     set $no_cache 0;
     if ($http_cookie ~* "S?SESS|_session") {
@@ -103,13 +90,11 @@ EOF
 elif [[ "$CMS_TYPE" == "d7" ]]; then
     SITE_ROOT="/var/www/prod-$DOMAIN"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
-
-CMS_BLOCK=$(cat <<'DRUPAL7'
+    CMS_BLOCK=$(cat <<'DRUPAL7'
     # Deny access to hidden and sensitive files
     location ~ (^|/)\. {
         deny all;
     }
-
     location ~* \.(engine|inc|install|make|module|profile|po|sh|.*sql|theme|tpl\.php)$ {
         deny all;
     }
@@ -137,7 +122,6 @@ CMS_BLOCK=$(cat <<'DRUPAL7'
     }
 DRUPAL7
 )
-
     CACHE_BYPASS=$(cat <<'EOF'
     set $no_cache 0;
     if ($http_cookie ~* "S?SESS|_session") {
@@ -149,14 +133,13 @@ EOF
 elif [[ "$CMS_TYPE" == "wp" ]]; then
     SITE_ROOT="/var/www/prod-$DOMAIN"
     FRONT_CONTROLLER='try_files $uri $uri/ /index.php?$args;'
-
-CMS_BLOCK=$(cat <<'WP'
+    CMS_BLOCK=$(cat <<'WP'
     # Deny access to hidden files
     location ~ (^|/)\. {
         deny all;
     }
 
-    # Blackhole XML-RPC
+    # Blackhole XML-RPC (disable all access)
     location = /xmlrpc.php {
         deny all;
         access_log off;
@@ -171,7 +154,6 @@ CMS_BLOCK=$(cat <<'WP'
     }
 WP
 )
-
     CACHE_BYPASS=$(cat <<'EOF'
     set $no_cache 0;
     if ($http_cookie ~* "wordpress_logged_in_|wp-postpass_|wordpress_sec") {
@@ -187,14 +169,13 @@ EOF
 elif [[ "$CMS_TYPE" == "generic" ]]; then
     SITE_ROOT="/var/www/prod-$DOMAIN"
     FRONT_CONTROLLER='try_files $uri /index.php?$query_string;'
-
-CMS_BLOCK=$(cat <<'GENERIC'
+    CMS_BLOCK=$(cat <<'GENERIC'
     # Generic PHP site config — deny hidden files
     location ~ (^|/)\. {
         deny all;
     }
 
-    # Cache static assets
+    # Cache static assets (images, fonts, CSS, JS)
     location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|eot|ttf|svg|mp4|ogg|webm)$ {
         expires 6M;
         access_log off;
@@ -202,7 +183,6 @@ CMS_BLOCK=$(cat <<'GENERIC'
     }
 GENERIC
 )
-
     CACHE_BYPASS=$(cat <<'EOF'
     set $no_cache 0;
     # No CMS-specific session handling
@@ -215,22 +195,15 @@ else
 fi
 
 # --- Ask PHP version ---
-read -r -p "❓ Which PHP version do you want to use? (7.0/7.4/8.0/8.1/8.2/8.3/8.4) [8.4]: " PHP_VERSION
-PHP_VERSION="${PHP_VERSION:-8.4}"
+read -r -p "❓ Which PHP version do you want to use? (7.0/7.4/8.0/8.1/8.2/8.3) [8.3]: " PHP_VERSION
+PHP_VERSION="${PHP_VERSION:-8.3}"
 PHP_SOCKET="/run/php/php${PHP_VERSION}-fpm.sock"
 
-if [ ! -S "$PHP_SOCKET" ]; then
-    echo "❌ PHP-FPM socket not found: $PHP_SOCKET"
-    echo "🛑 Is php${PHP_VERSION}-fpm installed and running?"
-    echo "👉 Try: sudo systemctl status php${PHP_VERSION}-fpm"
-    exit 1
-fi
-
-# --- Extra per-CMS server-level blocks ---
+# --- Extra per-CMS server-level blocks (e.g. wp-admin handling for WP) ---
 EXTRA_SERVER_BLOCKS=""
 
 if [[ "$CMS_TYPE" == "wp" ]]; then
-EXTRA_SERVER_BLOCKS=$(cat <<'WPEXTRA'
+    EXTRA_SERVER_BLOCKS=$(cat <<'WPEXTRA'
     # Ensure all wp-admin PHP files are always passed to PHP-FPM
     location ~ ^/wp-admin/.*\.php$ {
         include snippets/fastcgi-php.conf;
@@ -238,7 +211,7 @@ EXTRA_SERVER_BLOCKS=$(cat <<'WPEXTRA'
         include fastcgi_params;
     }
 
-    # Do not cache admin-ajax
+    # Do not cache admin-ajax (important for editors & heartbeat)
     location ~* /wp-admin/admin-ajax\.php$ {
         include snippets/fastcgi-php.conf;
         fastcgi_pass unix:__PHP_SOCKET__;
@@ -248,6 +221,7 @@ EXTRA_SERVER_BLOCKS=$(cat <<'WPEXTRA'
     }
 WPEXTRA
 )
+    # Inject the real PHP socket path
     EXTRA_SERVER_BLOCKS="${EXTRA_SERVER_BLOCKS//__PHP_SOCKET__/$PHP_SOCKET}"
 fi
 
@@ -269,7 +243,7 @@ fi
 OVERWRITE=false
 
 if [ -f "$NGINX_CONF_PATH" ] || [ -L "$NGINX_SYMLINK" ]; then
-    echo "⚠️ Existing config detected:"
+    echo "  Existing config detected:"
     [ -f "$NGINX_CONF_PATH" ] && echo "   - Config file exists: $NGINX_CONF_PATH"
     [ -L "$NGINX_SYMLINK" ] && echo "   - Symlink exists:     $NGINX_SYMLINK"
 
@@ -303,7 +277,7 @@ server {
     listen 80;
     server_name $DOMAIN www.$DOMAIN;
 
-    # Upload size limits
+    # Upload size limits (safe default: 64M)
     client_max_body_size 64M;
 
     root $SITE_ROOT;
@@ -366,11 +340,12 @@ fi
 
 # --- Final Certbot instruction ---
 echo ""
-echo "🔐 SSL certificates not yet installed for $DOMAIN"
-echo "👉 To issue Let's Encrypt SSL certificates, run:"
+echo "  SSL certificates not yet installed for $DOMAIN"
+echo "👉 To issue Let's Encrypt SSL certificates, run the following command:"
 echo ""
 echo "   sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN"
 echo ""
 echo "💡 This will update the config with full HTTPS support automatically."
 echo ""
-echo "✅ Site bootstrap complete for $DOMAIN using PHP $PHP_VERSION"
+echo "✅ Site bootstrap (HTTP-only + FastCGI) complete for $DOMAIN"
+

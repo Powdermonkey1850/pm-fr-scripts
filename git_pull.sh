@@ -18,6 +18,8 @@ echo "🔍 Git repository root: $REPO_ROOT"
 # --- GUARANTEE OWNERSHIP RESTORATION ---
 restore_ownership() {
   echo "🔁 Restoring ownership to www-data..."
+  # Recreate aggregated asset dirs deleted by drush cr
+  mkdir -p "$REPO_ROOT/web/sites/default/files/css" "$REPO_ROOT/web/sites/default/files/js"
   sudo chown -R www-data:www-data "$REPO_ROOT"
 }
 trap restore_ownership EXIT

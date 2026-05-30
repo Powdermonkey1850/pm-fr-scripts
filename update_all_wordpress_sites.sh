@@ -20,9 +20,9 @@ mkdir -p "$TMP_DIR"
 
 # Detect interactive shell (manual run) vs cron
 if [ -t 1 ]; then
-    exec > >(tee -a "$REPORT_FILE") 2>&1
+	exec > >(tee -a "$REPORT_FILE") 2>&1
 else
-    exec >> "$REPORT_FILE" 2>&1
+	exec >> "$REPORT_FILE" 2>&1
 fi
 
 echo "=================================================="
@@ -34,41 +34,46 @@ echo "=================================================="
 echo
 
 for SITE in "$WWW_ROOT"/prod-*; do
-    [ -d "$SITE" ] || continue
+	[ -d "$SITE" ] || continue
 
-    echo "--------------------------------------------------"
-    echo "Site: $SITE"
-    echo "Time: $(date)"
-    echo
+	echo "--------------------------------------------------"
+	echo "Site: $SITE"
+	echo "Time: $(date)"
+	echo
 
     # WordPress detection
     if [ ! -f "$SITE/wp-config.php" ] || [ ! -d "$SITE/wp-content" ]; then
-        echo "Not a WordPress site – skipped."
-        echo
-        continue
+	    echo "Not a WordPress site – skipped."
+	    echo
+	    continue
     fi
 
     if ! $SUDOW $WP_CLI --path="$SITE" core is-installed; then
-        echo "WP-CLI reports WordPress not installed – skipped."
-        echo
-        continue
+	    echo "WP-CLI reports WordPress not installed – skipped."
+	    echo
+	    continue
     fi
 
     echo "Updating WordPress core..."
     if ! $SUDOW $WP_CLI --path="$SITE" core update; then
-        echo "❌ Core update FAILED"
+	    echo "❌ Core update FAILED"
     fi
     echo
 
+
     echo "Updating plugins..."
-    if ! $SUDOW $WP_CLI --path="$SITE" plugin update --all; then
-        echo "❌ Plugin update FAILED"
+    echo "Excluding shortcodes-ultimate due to known 7.5.1 fatal error."
+    if ! $SUDOW $WP_CLI --path="$SITE" plugin update --all --exclude=shortcodes-ultimate; then
+	    echo "❌ Plugin update FAILED"
     fi
+
+
+
     echo
 
     echo "Updating themes..."
     if ! $SUDOW $WP_CLI --path="$SITE" theme update --all; then
-        echo "❌ Theme update FAILED"
+	    echo "❌ Theme update FAILED"
     fi
     echo
 
@@ -87,10 +92,10 @@ SUBJECT="📊 WordPress Update Report on $HOSTNAME"
 BODY_TEXT="$(cat "$REPORT_FILE")"
 
 $AWS_CLI ses send-email \
-    --region "$SES_REGION" \
-    --from "$SES_FROM" \
-    --destination "ToAddresses=$SES_TO" \
-    --message "Subject={Data=$SUBJECT},Body={Text={Data=$BODY_TEXT}}"
+	--region "$SES_REGION" \
+	--from "$SES_FROM" \
+	--destination "ToAddresses=$SES_TO" \
+	--message "Subject={Data=$SUBJECT},Body={Text={Data=$BODY_TEXT}}"
 
 # Cleanup
 rm -f "$REPORT_FILE"
